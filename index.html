@@ -2359,6 +2359,8 @@ img{max-width:100%;height:auto;}
 /* ══ FEATURE DETECTION ══ */
 const isTouch = window.matchMedia('(hover:none),(pointer:coarse)').matches;
 const reducedMotion = window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+const INTELLINVEST_CHAT_WEBHOOK_URL = 'https://sql1.srv869945.hstgr.cloud/webhook/intellinvest-chat';
+const INTELLINVEST_FORM_WEBHOOK_URL = 'https://sql1.srv869945.hstgr.cloud/webhook/intellinvest-form';
 
 /* ══ CUSTOM CURSOR (skip on touch) ══ */
 const dot=document.getElementById('cursorDot'),ring=document.getElementById('cursorRing');
@@ -2509,18 +2511,21 @@ function selectService(el){
   const hidden=document.getElementById('cf-service');
   if(hidden) hidden.value=el.dataset.value||'';
 }
-function submitForm(e){
+async function submitForm(e){
   if(e&&e.preventDefault) e.preventDefault();
   const form=document.getElementById('contactForm');
   const err=document.getElementById('cf-error');
   const btn=document.getElementById('cf-submit');
+  const originalText=btn.textContent;
   err.style.display='none';
   // Honeypot
   if(form.elements['website'] && form.elements['website'].value){return false;}
   // Native validation
   const name=form.elements['name'].value.trim();
   const email=form.elements['email'].value.trim();
+  const phone=(form.elements['phone']?.value||'').trim();
   const service=form.elements['service'].value;
+  const message=(form.elements['message']?.value||'').trim();
   const errors=[];
   if(name.length<2) errors.push('Please enter your full name.');
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push('Please enter a valid email address.');
@@ -2530,11 +2535,47 @@ function submitForm(e){
     err.style.display='block';
     return false;
   }
-  btn.textContent="✓ Message sent! We'll be in touch shortly.";
-  btn.style.background='#16a34a';
-  btn.style.color='#fff';
+  const serviceLabels={company:'Company Setup',financial:'Financial Planning',ai:'AI Solutions'};
+  btn.textContent='Sending...';
   btn.disabled=true;
-  // TODO: integrate with backend (e.g. Formspree/Netlify Forms)
+  try{
+    const response=await fetch(INTELLINVEST_FORM_WEBHOOK_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        source:'intellinvest_website_contact_form',
+        name,email,phone,service,
+        service_label:serviceLabels[service]||service,
+        message,
+        page_url:window.location.href,
+        submitted_at:new Date().toISOString()
+      })
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || data.success===false){
+      throw new Error(data.message||'We could not send your message right now.');
+    }
+    btn.textContent="Message sent. We'll be in touch shortly.";
+    btn.style.background='#16a34a';
+    btn.style.color='#fff';
+    form.reset();
+    document.querySelectorAll('.svc-pill').forEach(p=>{
+      p.style.background='var(--white)';
+      p.style.borderColor='rgba(26,95,168,.15)';
+      p.setAttribute('aria-checked','false');
+    });
+    setTimeout(()=>{
+      btn.textContent=originalText;
+      btn.style.background='';
+      btn.style.color='';
+      btn.disabled=false;
+    },5000);
+  }catch(error){
+    err.textContent=error.message||'There was an error sending your message. Please try again or email info@intellinvest.com.';
+    err.style.display='block';
+    btn.textContent=originalText;
+    btn.disabled=false;
+  }
   return false;
 }
 
@@ -2741,6 +2782,364 @@ function closeFaqModalDirect() {
 function closeFaqModal(e) {
   if (e.target === document.getElementById('faqModalBg')) closeFaqModalDirect();
 }
+</script>
+<script>
+(function(){
+  const CHAT_WEBHOOK_URL = typeof INTELLINVEST_CHAT_WEBHOOK_URL !== 'undefined'
+    ? INTELLINVEST_CHAT_WEBHOOK_URL
+    : 'https://sql1.srv869945.hstgr.cloud/webhook/intellinvest-chat';
+  const NEXA_URL = 'https://www.nexavisionai.net';
+
+  const style = document.createElement('style');
+  style.textContent = `
+    #iv-chatbot-container{position:fixed;right:22px;bottom:22px;z-index:10050;font-family:'DM Sans',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0A0F1E;}
+    #iv-chatbot-button{width:66px;height:66px;border:0;border-radius:50%;background:radial-gradient(circle at 30% 20%,#3B9EE8 0,#1A5FA8 34%,#0A0F1E 100%);box-shadow:0 20px 50px rgba(10,15,30,.32),0 0 0 1px rgba(255,255,255,.18) inset;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .22s ease,box-shadow .22s ease;position:relative;}
+    #iv-chatbot-button:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 24px 60px rgba(10,15,30,.38),0 0 0 1px rgba(255,255,255,.2) inset;}
+    #iv-chatbot-button .iv-chat-logo{width:48px;height:48px;border-radius:50%;background:#fff;display:grid;place-items:center;box-shadow:0 10px 24px rgba(0,0,0,.16);font-family:'Sora',sans-serif;font-size:28px;font-weight:800;color:#0D2F5E;letter-spacing:-.06em;position:relative;}
+    #iv-chatbot-button .iv-chat-logo::after{content:'';position:absolute;width:9px;height:9px;border-radius:50%;right:7px;top:8px;background:#3B9EE8;border:2px solid #fff;}
+    #iv-chatbot-button .iv-chat-close{display:none;width:26px;height:26px;stroke:#fff;stroke-width:2.4;}
+    #iv-chatbot-button.active .iv-chat-logo{display:none;}
+    #iv-chatbot-button.active .iv-chat-close{display:block;}
+    #iv-chatbot-window{position:absolute;right:0;bottom:82px;width:396px;height:min(640px,calc(100vh - 120px));background:#F8FAFF;border:1px solid rgba(13,47,94,.12);border-radius:18px;box-shadow:0 30px 80px rgba(10,15,30,.32);display:none;overflow:hidden;flex-direction:column;}
+    #iv-chatbot-window.show{display:flex;animation:ivChatIn .24s ease;}
+    @keyframes ivChatIn{from{opacity:0;transform:translateY(14px) scale(.98);}to{opacity:1;transform:none;}}
+    .iv-chat-header{padding:18px 18px 16px;background:linear-gradient(135deg,#0A0F1E 0%,#0D2F5E 72%,#1A5FA8 100%);display:flex;align-items:center;gap:12px;color:#fff;}
+    .iv-chat-avatar{width:44px;height:44px;border-radius:50%;background:#fff;color:#0D2F5E;display:grid;place-items:center;font-family:'Sora',sans-serif;font-size:25px;font-weight:800;letter-spacing:-.06em;box-shadow:0 10px 24px rgba(0,0,0,.18);flex:0 0 auto;}
+    .iv-chat-title{min-width:0;flex:1;}
+    .iv-chat-title h3{font-family:'Sora',sans-serif;font-size:16px;line-height:1.1;margin:0 0 4px;font-weight:800;color:#fff;letter-spacing:0;}
+    .iv-chat-title p{margin:0;font-size:12px;line-height:1.35;color:rgba(255,255,255,.74);}
+    .iv-chat-status{font-size:11px;font-weight:700;color:#0A0F1E;background:#3B9EE8;border-radius:999px;padding:5px 9px;white-space:nowrap;}
+    .iv-chat-messages{flex:1;overflow-y:auto;padding:20px;background:linear-gradient(180deg,#F8FAFF 0%,#EEF5FF 100%);display:flex;flex-direction:column;gap:14px;}
+    .iv-chat-messages::-webkit-scrollbar{width:6px}.iv-chat-messages::-webkit-scrollbar-thumb{background:rgba(13,47,94,.22);border-radius:999px}
+    .iv-message{display:flex;align-items:flex-end;gap:9px;animation:ivMsgIn .18s ease;}
+    @keyframes ivMsgIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+    .iv-message.user{flex-direction:row-reverse;}
+    .iv-message-avatar{width:31px;height:31px;border-radius:50%;background:#0D2F5E;color:#fff;display:grid;place-items:center;font-family:'Sora',sans-serif;font-size:13px;font-weight:800;flex:0 0 auto;}
+    .iv-message:not(.user) .iv-message-avatar{background:#fff;color:#0D2F5E;border:1px solid rgba(13,47,94,.12);}
+    .iv-message-content{max-width:78%;border-radius:15px 15px 15px 5px;background:#fff;border:1px solid rgba(13,47,94,.08);box-shadow:0 8px 22px rgba(13,47,94,.08);padding:12px 14px;font-size:14px;line-height:1.5;color:#1b2433;}
+    .iv-message.user .iv-message-content{border-radius:15px 15px 5px 15px;background:#0D2F5E;border-color:#0D2F5E;color:#fff;box-shadow:0 10px 24px rgba(13,47,94,.2);}
+    .iv-chat-welcome{background:#fff;border:1px solid rgba(13,47,94,.1);box-shadow:0 12px 28px rgba(13,47,94,.08);border-radius:16px;padding:16px;}
+    .iv-chat-welcome h4{font-family:'Sora',sans-serif;font-size:16px;color:#0D2F5E;margin:0 0 6px;letter-spacing:0;}
+    .iv-chat-welcome p{font-size:14px;line-height:1.5;margin:0 0 14px;color:#3D4A5C;}
+    .iv-chat-suggestions{display:grid;gap:8px;}
+    .iv-chat-suggestion,.iv-route-btn{border:1px solid rgba(26,95,168,.18);background:#F8FAFF;color:#0D2F5E;border-radius:10px;padding:9px 10px;font-family:'Sora',sans-serif;font-size:12px;font-weight:700;line-height:1.25;cursor:pointer;text-align:left;transition:background .18s,border-color .18s,transform .18s;}
+    .iv-chat-suggestion:hover,.iv-route-btn:hover{background:rgba(59,158,232,.12);border-color:#3B9EE8;transform:translateY(-1px);}
+    .iv-route-btn{display:inline-flex;align-items:center;margin:7px 6px 0 0;text-decoration:none;}
+    .iv-typing{align-self:flex-start;margin-left:40px;background:#fff;border:1px solid rgba(13,47,94,.08);border-radius:15px;padding:10px 13px;display:flex;gap:5px;box-shadow:0 8px 22px rgba(13,47,94,.08);}
+    .iv-typing span{width:7px;height:7px;border-radius:50%;background:#1A5FA8;animation:ivTyping 1.15s infinite ease-in-out;}
+    .iv-typing span:nth-child(2){animation-delay:.14s}.iv-typing span:nth-child(3){animation-delay:.28s}
+    @keyframes ivTyping{0%,80%,100%{transform:translateY(0);opacity:.55}40%{transform:translateY(-5px);opacity:1}}
+    .iv-chat-contact{display:none;padding:16px 18px;background:#fff;border-top:1px solid rgba(13,47,94,.1);}
+    .iv-chat-contact.show{display:block;}
+    .iv-chat-contact h4{margin:0 0 4px;font-family:'Sora',sans-serif;font-size:14px;color:#0D2F5E;}
+    .iv-chat-contact p{margin:0 0 12px;color:#3D4A5C;font-size:12px;line-height:1.4;}
+    .iv-contact-grid{display:grid;gap:9px;}
+    .iv-contact-grid input{width:100%;border:1.5px solid rgba(26,95,168,.15);border-radius:10px;background:#F8FAFF;padding:11px 12px;font-family:'DM Sans',sans-serif;font-size:14px;color:#0A0F1E;outline:none;}
+    .iv-contact-grid input:focus{border-color:#3B9EE8;background:#fff;box-shadow:0 0 0 3px rgba(59,158,232,.12);}
+    .iv-contact-actions{display:flex;gap:9px;margin-top:10px;}
+    .iv-contact-actions button{flex:1;border:0;border-radius:10px;padding:11px 12px;font-family:'Sora',sans-serif;font-size:12px;font-weight:800;cursor:pointer;}
+    .iv-contact-save{background:#0D2F5E;color:#fff;}.iv-contact-cancel{background:#EEF5FF;color:#0D2F5E;}
+    .iv-chat-footer{background:#fff;border-top:1px solid rgba(13,47,94,.1);padding:13px 14px 10px;}
+    .iv-chat-input-row{display:flex;align-items:center;gap:9px;}
+    #iv-chatbot-input{flex:1;min-width:0;border:1.5px solid rgba(26,95,168,.16);border-radius:13px;background:#F8FAFF;padding:13px 14px;font-family:'DM Sans',sans-serif;font-size:14px;line-height:1.3;color:#0A0F1E;outline:none;}
+    #iv-chatbot-input:focus{border-color:#3B9EE8;background:#fff;box-shadow:0 0 0 3px rgba(59,158,232,.12);}
+    #iv-chatbot-send,#iv-chatbot-contact-btn{width:46px;height:46px;border:0;border-radius:13px;background:#0D2F5E;color:#fff;display:grid;place-items:center;cursor:pointer;transition:transform .18s,background .18s;flex:0 0 auto;}
+    #iv-chatbot-send:hover,#iv-chatbot-contact-btn:hover{transform:translateY(-1px);background:#1A5FA8;}
+    #iv-chatbot-send:disabled{opacity:.55;cursor:not-allowed;transform:none;}
+    #iv-chatbot-send svg,#iv-chatbot-contact-btn svg{width:20px;height:20px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+    .iv-chat-powered{margin-top:9px;text-align:center;font-size:11px;color:#8A95A6;}
+    .iv-chat-powered a{color:#6D7788;text-decoration:none;font-weight:700;}
+    .iv-chat-error{font-size:12px;color:#b91c1c;background:#fee2e2;border:1px solid #fecaca;border-radius:10px;padding:10px 12px;}
+    @media(max-width:640px){#iv-chatbot-container{right:14px;bottom:14px}#iv-chatbot-window{right:-6px;width:calc(100vw - 28px);height:min(620px,calc(100vh - 98px));bottom:78px}.iv-chat-status{display:none}.iv-message-content{max-width:82%;}}
+  `;
+  document.head.appendChild(style);
+
+  function initIntellinvestChatbot(){
+    if(document.getElementById('iv-chatbot-container')) return;
+    document.body.insertAdjacentHTML('beforeend', `
+      <div id="iv-chatbot-container">
+        <button id="iv-chatbot-button" aria-label="Open Intellinvest chat">
+          <span class="iv-chat-logo">i</span>
+          <svg class="iv-chat-close" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+        <div id="iv-chatbot-window" aria-live="polite">
+          <div class="iv-chat-header">
+            <div class="iv-chat-avatar">i</div>
+            <div class="iv-chat-title">
+              <h3>Intellinvest Assistant</h3>
+              <p>Dubai business, financial planning and AI systems</p>
+            </div>
+            <div class="iv-chat-status">Online</div>
+          </div>
+          <div id="iv-chatbot-messages" class="iv-chat-messages"></div>
+          <div id="iv-chatbot-contact" class="iv-chat-contact">
+            <h4>Book a consultation</h4>
+            <p>Leave your details and the Intellinvest team will contact you shortly.</p>
+            <div class="iv-contact-grid">
+              <input id="iv-contact-name" type="text" placeholder="Name" autocomplete="name">
+              <input id="iv-contact-email" type="email" placeholder="Email" autocomplete="email">
+              <input id="iv-contact-phone" type="tel" placeholder="Phone or WhatsApp" autocomplete="tel">
+            </div>
+            <div class="iv-contact-actions">
+              <button type="button" class="iv-contact-cancel" id="iv-contact-cancel">Cancel</button>
+              <button type="button" class="iv-contact-save" id="iv-contact-save">Send</button>
+            </div>
+          </div>
+          <div class="iv-chat-footer">
+            <div class="iv-chat-input-row">
+              <input id="iv-chatbot-input" type="text" placeholder="Ask about setup, finance or AI..." autocomplete="off">
+              <button id="iv-chatbot-contact-btn" type="button" aria-label="Leave contact details" title="Leave contact details">
+                <svg viewBox="0 0 24 24"><path d="M21 10.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8.5"/><path d="M21 7l-9 6L3 7"/><path d="M5 5h14a2 2 0 0 1 2 2v0a2 2 0 0 1-.9 1.67L12 14 3.9 8.67A2 2 0 0 1 3 7v0a2 2 0 0 1 2-2Z"/></svg>
+              </button>
+              <button id="iv-chatbot-send" type="button" aria-label="Send message">
+                <svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7Z"/></svg>
+              </button>
+            </div>
+            <div class="iv-chat-powered">Powered by <a href="${NEXA_URL}" target="_blank" rel="noopener">Nexa Vision AI</a></div>
+          </div>
+        </div>
+      </div>
+    `);
+
+    const widget = {
+      button: document.getElementById('iv-chatbot-button'),
+      window: document.getElementById('iv-chatbot-window'),
+      messages: document.getElementById('iv-chatbot-messages'),
+      input: document.getElementById('iv-chatbot-input'),
+      sendButton: document.getElementById('iv-chatbot-send'),
+      contactButton: document.getElementById('iv-chatbot-contact-btn'),
+      contactPanel: document.getElementById('iv-chatbot-contact'),
+      contactName: document.getElementById('iv-contact-name'),
+      contactEmail: document.getElementById('iv-contact-email'),
+      contactPhone: document.getElementById('iv-contact-phone'),
+      isOpen: false,
+      isEscalated: false,
+      sessionId: localStorage.getItem('intellinvest_chat_session') || ('iv_' + Date.now() + '_' + Math.random().toString(36).slice(2,10)),
+      history: [],
+      routeKeywords: {
+        COMPANY_SETUP: { route:'company', label:'Company Setup' },
+        FINANCIAL_PLANNING: { route:'financial', label:'Financial Planning' },
+        AI_SOLUTIONS: { route:'ai', label:'AI Solutions' },
+        BOOK_CALL: { route:'contact', label:'Book a Call' }
+      },
+      init(){
+        localStorage.setItem('intellinvest_chat_session', this.sessionId);
+        this.loadHistory();
+        this.bindEvents();
+        if(!this.history.length) this.showWelcome();
+      },
+      bindEvents(){
+        this.button.addEventListener('click',()=>this.toggle());
+        this.sendButton.addEventListener('click',()=>this.sendMessage());
+        this.input.addEventListener('keydown',event=>{
+          if(event.key==='Enter' && !event.shiftKey){
+            event.preventDefault();
+            this.sendMessage();
+          }
+        });
+        this.contactButton.addEventListener('click',()=>this.showContactForm());
+        document.getElementById('iv-contact-cancel').addEventListener('click',()=>this.hideContactForm());
+        document.getElementById('iv-contact-save').addEventListener('click',()=>this.saveContact());
+        this.messages.addEventListener('click',event=>{
+          const routeButton=event.target.closest('[data-iv-route]');
+          if(routeButton) this.routeTo(routeButton.dataset.ivRoute);
+          const suggestion=event.target.closest('[data-iv-suggestion]');
+          if(suggestion){
+            this.input.value=suggestion.dataset.ivSuggestion;
+            this.sendMessage();
+          }
+        });
+      },
+      toggle(){
+        this.isOpen=!this.isOpen;
+        this.window.classList.toggle('show',this.isOpen);
+        this.button.classList.toggle('active',this.isOpen);
+        if(this.isOpen) setTimeout(()=>this.input.focus(),60);
+      },
+      loadHistory(){
+        try{
+          this.history=JSON.parse(localStorage.getItem('intellinvest_chat_history_'+this.sessionId)||'[]');
+        }catch(error){ this.history=[]; }
+        if(this.history.length){
+          this.messages.innerHTML='';
+          this.history.forEach(item=>this.addMessage(item.content,item.role==='user',false));
+        }
+      },
+      saveHistory(){
+        localStorage.setItem('intellinvest_chat_history_'+this.sessionId,JSON.stringify(this.history.slice(-18)));
+      },
+      showWelcome(){
+        const welcome=document.createElement('div');
+        welcome.className='iv-chat-welcome';
+        welcome.innerHTML=`
+          <h4>How can we help?</h4>
+          <p>Ask about Dubai company setup, financial planning frameworks, or custom AI systems for your business.</p>
+          <div class="iv-chat-suggestions">
+            <button type="button" class="iv-chat-suggestion" data-iv-suggestion="I want to set up a company in Dubai">Set up a company in Dubai</button>
+            <button type="button" class="iv-chat-suggestion" data-iv-suggestion="I need financial planning guidance">Financial planning guidance</button>
+            <button type="button" class="iv-chat-suggestion" data-iv-suggestion="I want AI automation for my business">AI automation for my business</button>
+          </div>
+        `;
+        this.messages.appendChild(welcome);
+      },
+      addMessage(content,isUser,store=true){
+        const welcome=this.messages.querySelector('.iv-chat-welcome');
+        if(welcome) welcome.remove();
+        const message=document.createElement('div');
+        message.className='iv-message' + (isUser?' user':'');
+        const avatar=isUser?'You':'i';
+        const processed=isUser?this.escapeHtml(content):this.convertRouteKeywords(content);
+        message.innerHTML='<div class="iv-message-avatar">'+avatar+'</div><div class="iv-message-content">'+processed+'</div>';
+        this.messages.appendChild(message);
+        if(store){
+          this.history.push({role:isUser?'user':'assistant',content});
+          this.saveHistory();
+        }
+        this.scrollBottom();
+      },
+      showTyping(){
+        const typing=document.createElement('div');
+        typing.className='iv-typing';
+        typing.id='iv-typing';
+        typing.innerHTML='<span></span><span></span><span></span>';
+        this.messages.appendChild(typing);
+        this.scrollBottom();
+      },
+      hideTyping(){
+        const typing=document.getElementById('iv-typing');
+        if(typing) typing.remove();
+      },
+      async sendMessage(){
+        const message=this.input.value.trim();
+        if(!message) return;
+        this.input.value='';
+        this.sendButton.disabled=true;
+        this.addMessage(message,true);
+        this.showTyping();
+        try{
+          const response=await fetch(CHAT_WEBHOOK_URL,{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              message,
+              session_id:this.sessionId,
+              history:this.history.slice(-10),
+              page_url:window.location.href,
+              user_name:this.getStoredContact().name||null,
+              user_email:this.getStoredContact().email||null,
+              user_phone:this.getStoredContact().phone||null
+            })
+          });
+          const data=await response.json();
+          if(!response.ok || !data.success || !data.message) throw new Error(data.message||'Invalid response');
+          this.hideTyping();
+          this.addMessage(data.message,false);
+          if(data.escalated){
+            this.isEscalated=true;
+            setTimeout(()=>this.showContactForm(),400);
+          }
+        }catch(error){
+          this.hideTyping();
+          this.showError('Sorry, the assistant is not available right now. Please email info@intellinvest.com or try again shortly.');
+        }finally{
+          this.sendButton.disabled=false;
+          this.input.focus();
+        }
+      },
+      showError(text){
+        const error=document.createElement('div');
+        error.className='iv-chat-error';
+        error.textContent=text;
+        this.messages.appendChild(error);
+        this.scrollBottom();
+        setTimeout(()=>error.remove(),7000);
+      },
+      showContactForm(){
+        const saved=this.getStoredContact();
+        this.contactName.value=saved.name||'';
+        this.contactEmail.value=saved.email||'';
+        this.contactPhone.value=saved.phone||'';
+        this.contactPanel.classList.add('show');
+        setTimeout(()=>this.contactName.focus(),50);
+      },
+      hideContactForm(){
+        this.contactPanel.classList.remove('show');
+        this.input.focus();
+      },
+      getStoredContact(){
+        try{return JSON.parse(localStorage.getItem('intellinvest_chat_contact')||'{}');}
+        catch(error){return {};}
+      },
+      async saveContact(){
+        const contact={
+          name:this.contactName.value.trim(),
+          email:this.contactEmail.value.trim(),
+          phone:this.contactPhone.value.trim()
+        };
+        if(!contact.name){
+          alert('Please enter your name.');
+          return;
+        }
+        if(!contact.email && !contact.phone){
+          alert('Please add an email or phone number.');
+          return;
+        }
+        localStorage.setItem('intellinvest_chat_contact',JSON.stringify(contact));
+        this.hideContactForm();
+        try{
+          await fetch(CHAT_WEBHOOK_URL,{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              message:'__UPDATE_CONTACT__',
+              session_id:this.sessionId,
+              user_name:contact.name,
+              user_email:contact.email,
+              user_phone:contact.phone,
+              history:this.history.slice(-10),
+              page_url:window.location.href
+            })
+          });
+          this.addMessage('Thanks. The Intellinvest team will review your request and contact you shortly.',false);
+        }catch(error){
+          this.showError('We saved your contact locally, but could not notify the team right now. Please email info@intellinvest.com.');
+        }
+      },
+      routeTo(route){
+        if(route==='contact') this.showContactForm();
+        if(typeof navigate==='function'){
+          navigate(route);
+        }else{
+          window.location.hash=route;
+        }
+      },
+      convertRouteKeywords(text){
+        let result=this.escapeHtml(text).replace(/\n/g,'<br>');
+        Object.keys(this.routeKeywords).forEach(keyword=>{
+          const config=this.routeKeywords[keyword];
+          const button='<button type="button" class="iv-route-btn" data-iv-route="'+config.route+'">'+config.label+'</button>';
+          result=result.replace(new RegExp('\\b'+keyword+'\\b','g'),button);
+        });
+        return result;
+      },
+      escapeHtml(text){
+        const div=document.createElement('div');
+        div.textContent=String(text||'');
+        return div.innerHTML;
+      },
+      scrollBottom(){
+        setTimeout(()=>{this.messages.scrollTop=this.messages.scrollHeight;},40);
+      }
+    };
+    widget.init();
+  }
+
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',initIntellinvestChatbot);
+  }else{
+    initIntellinvestChatbot();
+  }
+})();
 </script>
 </body>
 </html>
